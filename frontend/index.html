@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Certificate Registry</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.1/ethers.umd.min.js"></script>
+<style>
+  :root { --bg:#0f1420; --panel:#171d2e; --border:#2a3350; --text:#e8ecf7; --muted:#8b93ab; --accent:#6ea8ff; --good:#38d39f; --bad:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); padding:32px 16px; }
+  .wrap { max-width:780px; margin:auto; } h1 { font-size:1.5rem; margin-bottom:4px; }
+  .sub { color:var(--muted); margin-bottom:20px; } .notice { padding:12px; border:1px solid #6e5924; border-radius:8px; background:#332914; margin-bottom:20px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:20px; }
+  .card h2 { font-size:1.05rem; margin:0 0 14px; } label { display:block; font-size:.85rem; color:var(--muted); margin:10px 0 4px; }
+  input { width:100%; padding:9px 11px; border-radius:8px; border:1px solid var(--border); background:#0d1220; color:var(--text); font-size:.9rem; }
+  button { margin-top:14px; padding:10px 16px; border-radius:8px; border:0; background:var(--accent); color:#0d1220; font-weight:600; cursor:pointer; font-size:.9rem; }
+  button.secondary { background:transparent; border:1px solid var(--border); color:var(--text); } button:disabled { opacity:.5; cursor:wait; }
+  .result { margin-top:14px; padding:12px; border-radius:8px; font-size:.88rem; display:none; overflow-wrap:anywhere; }
+  .result.good { display:block; background:#12332b; border:1px solid var(--good); color:var(--good); } .result.bad { display:block; background:#381e25; border:1px solid var(--bad); color:var(--bad); }
+  .hash { font-family:monospace; font-size:.78rem; word-break:break-all; margin-top:6px; } #status { font-size:.85rem; color:var(--muted); margin-bottom:18px; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>🎓 Academic Certificate Registry</h1>
+  <div id="status">Connecting…</div>
+  <section class="card">
+    <h2>1. Contract</h2>
+    <label>Deployed contract address</label>
+    <input id="contractAddress" placeholder="0x…" />
+    <button id="saveAddressBtn">Use contract</button>
+  </section>
+  <section class="card">
+    <h2>2. Issue a certificate</h2>
+    <label>Student name</label><input id="studentName" placeholder="Asha Rao" />
+    <label>Course name</label><input id="courseName" placeholder="B.Tech Computer Science" />
+    <label>Institution name</label><input id="institutionName" placeholder="Example Institute of Technology" />
+    <label>Certificate document text (hashed; not stored on-chain)</label><input id="docText" placeholder="Paste certificate content or a unique reference" />
+    <button id="issueBtn">Issue certificate</button><div id="issueResult" class="result"></div>
+  </section>
+  <section class="card">
+    <h2>3. Verify a certificate</h2>
+    <label>Certificate ID</label><input id="verifyCertId" placeholder="0x…" />
+    <label>Certificate document text (must match exactly)</label><input id="verifyDocText" placeholder="Paste the certificate content to check" />
+    <button id="verifyBtn">Verify</button><div id="verifyResult" class="result"></div>
+  </section>
+  <section class="card">
+    <h2>4. Revoke a certificate</h2>
+    <label>Certificate ID</label><input id="revokeCertId" placeholder="0x…" />
+    <label>Reason</label><input id="revokeReason" placeholder="e.g. Issued in error" />
+    <button id="revokeBtn" class="secondary">Revoke</button><div id="revokeResult" class="result"></div>
+  </section>
+</main>
+<script>
+const ABI = [
+  "function issueCertificate(bytes32 _certificateId, bytes32 _documentHash, string _studentName, string _courseName, string _institutionName) external",
+  "function revokeCertificate(bytes32 _certificateId, string _reason) external",
+  "function verifyCertificate(bytes32 _certificateId, bytes32 _documentHash) external view returns (bool isValid, string status)"
+];
+const $ = (id) => document.getElementById(id);
+const addressInput = $("contractAddress");
+let readProvider;
+
+function showResult(id, ok, message) {
+  const el = $(id);
+  el.className = "result " + (ok ? "good" : "bad");
+  el.textContent = message;
+}
+function certIdFromInputs(name, course, institution) {
+  return ethers.keccak256(ethers.toUtf8Bytes(name + "|" + course + "|" + institution + "|" + Date.now()));
+}
+function docHash(text) { return ethers.keccak256(ethers.toUtf8Bytes(text)); }
+function contractAddress() {
+  const address = addressInput.value.trim();
+  if (!ethers.isAddress(address)) throw new Error("Enter a valid deployed contract address.");
+  localStorage.setItem("certificateRegistryAddress", address);
+  return address;
+}
+async function api(path, body) {
+  const response = await fetch(path, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Request failed.");
+  return data;
+}
+$("saveAddressBtn").addEventListener("click", () => {
+  try { const address = contractAddress(); $("status").textContent = "Connected · issuer " + window.appConnection.issuer; showResult("issueResult", true, "Contract address saved: " + address); }
+  catch (err) { showResult("issueResult", false, err.message); }
+});
+$("issueBtn").addEventListener("click", async (event) => {
+  const button = event.currentTarget; button.disabled = true;
+  try {
+    const studentName = $("studentName").value.trim(), courseName = $("courseName").value.trim();
+    const institutionName = $("institutionName").value.trim(), text = $("docText").value;
+    if (!studentName || !courseName || !institutionName || !text) throw new Error("Fill in all fields.");
+    const result = await api("/api/issue", { address:contractAddress(), certificateId:certIdFromInputs(studentName, courseName, institutionName), documentHash:docHash(text), studentName, courseName, institutionName });
+    showResult("issueResult", true, "Certificate issued. Give this Certificate ID to the student: " + result.certificateId + " · transaction " + result.transactionHash);
+  } catch (err) { showResult("issueResult", false, err.message); } finally { button.disabled = false; }
+});
+$("verifyBtn").addEventListener("click", async () => {
+  try {
+    const id = $("verifyCertId").value.trim();
+    if (!ethers.isHexString(id, 32)) throw new Error("Certificate ID must be a 32-byte hex value.");
+    const c = new ethers.Contract(contractAddress(), ABI, readProvider);
+    const [valid, status] = await c.verifyCertificate(id, docHash($("verifyDocText").value));
+    showResult("verifyResult", valid, (valid ? "✅ " : "❌ ") + status);
+  } catch (err) { showResult("verifyResult", false, err.message); }
+});
+$("revokeBtn").addEventListener("click", async (event) => {
+  const button = event.currentTarget; button.disabled = true;
+  try {
+    const id = $("revokeCertId").value.trim();
+    if (!ethers.isHexString(id, 32)) throw new Error("Certificate ID must be a 32-byte hex value.");
+    const result = await api("/api/revoke", { address:contractAddress(), certificateId:id, reason:$("revokeReason").value.trim() || "No reason given" });
+    showResult("revokeResult", true, "Certificate revoked · transaction " + result.transactionHash);
+  } catch (err) { showResult("revokeResult", false, err.message); } finally { button.disabled = false; }
+});
+
+(async () => {
+  try {
+    const response = await fetch("/api/status");
+    if (!response.ok) throw new Error("Server unavailable.");
+    window.appConnection = await response.json();
+    readProvider = new ethers.JsonRpcProvider(window.appConnection.rpcUrl);
+    addressInput.value = localStorage.getItem("certificateRegistryAddress") || window.appConnection.contractAddress || "";
+    $("status").textContent = "Connected · chain ID " + window.appConnection.chainId + " · issuer " + window.appConnection.issuer;
+    if (window.appConnection.contractAddress) localStorage.setItem("certificateRegistryAddress", window.appConnection.contractAddress);
+  } catch (err) { $("status").textContent = "Cannot reach the server. Start the application and refresh this page."; }
+})();
+</script>
+</body>
+</html>

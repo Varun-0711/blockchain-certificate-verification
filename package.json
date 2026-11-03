@@ -1,0 +1,15 @@
+{
+  "name": "blockchain-certificate-verification",
+  "version": "1.0.0",
+  "description": "Blockchain-based academic certificate verification system (SDG 4)",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "local": "node scripts/local-server.js"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.0"
+  }
+}
