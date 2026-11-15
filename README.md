@@ -1,11 +1,4 @@
 # Blockchain-Based Academic Certificate Verification
-### SDG 4 — Quality Education
-
-A tamper-proof system for universities to issue academic certificates on-chain,
-and for anyone (employers, other institutions, students) to verify their
-authenticity instantly — without emailing the registrar's office.
-
----
 
 ## 1. Problem it solves
 
